@@ -1,0 +1,68 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: mongo-bootstrap
+  namespace: mongodb
+spec:
+  backoffLimit: 5
+  template:
+    spec:
+      restartPolicy: OnFailure
+      containers:
+      - name: bootstrap
+        image: mongo:6.0
+
+        envFrom:
+        - secretRef:
+            name: mongo-db-credentials
+
+        command:
+        - sh
+        - -c
+        - |
+          sleep 30
+
+          # Initialize MongoDB Replica Set with Priority
+          mongosh mongodb://mongo-0.mongo.mongodb.svc.cluster.local:27017 <<EOF
+          rs.initiate({
+            _id: "rs0",
+            members: [
+              { _id: 0, host: "mongo-0.mongo.mongodb.svc.cluster.local:27017", priority: 2 },
+              { _id: 1, host: "mongo-1.mongo.mongodb.svc.cluster.local:27017", priority: 1 },
+              { _id: 2, host: "mongo-2.mongo.mongodb.svc.cluster.local:27017", priority: 0 }
+            ]
+          })
+          EOF
+
+          sleep 10
+
+          # Create Admin User
+          mongosh mongodb://mongo-0.mongo.mongodb.svc.cluster.local:27017 <<EOF
+          use admin
+          db.createUser({
+            user: "$ADMIN_USER",
+            pwd: "$ADMIN_PASS",
+            roles: [{ role: "root", db: "admin" }]
+          })
+          EOF
+
+          # Create Application User
+          mongosh mongodb://mongo-0.mongo.mongodb.svc.cluster.local:27017 <<EOF
+          use myappdb
+          db.createUser({
+            user: "$APP_USER",
+            pwd: "$APP_PASS",
+            roles: [{ role: "readWrite", db: "myappdb" }]
+          })
+          EOF
+
+          # Create Test User
+          mongosh mongodb://mongo-0.mongo.mongodb.svc.cluster.local:27017 <<EOF
+          use testdb
+          db.createUser({
+            user: "$TEST_USER",
+            pwd: "$TEST_PASS",
+            roles: [{ role: "readWrite", db: "testdb" }]
+          })
+          EOF
+

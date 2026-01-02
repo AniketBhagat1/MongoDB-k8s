@@ -1,0 +1,63 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: mongo
+  namespace: mongodb
+spec:
+  serviceName: mongo
+  replicas: 3
+  selector:
+    matchLabels:
+      app: mongo
+  template:
+    metadata:
+      labels:
+        app: mongo
+    spec:
+      initContainers:
+      - name: fix-keyfile
+        image: busybox
+        command:
+          - sh
+          - -c
+          - |
+            cp /keyfile-src/mongo-keyfile /keyfile-dst/mongo-keyfile
+            chmod 600 /keyfile-dst/mongo-keyfile
+        volumeMounts:
+        - name: keyfile-src
+          mountPath: /keyfile-src
+        - name: keyfile-dst
+          mountPath: /keyfile-dst
+
+      containers:
+      - name: mongo
+        image: mongo:6.0
+        command:
+          - mongod
+          - "--replSet=rs0"
+          - "--bind_ip_all"
+        ports:
+          - containerPort: 27017
+        volumeMounts:
+        - name: data
+          mountPath: /data/db
+        - name: keyfile-dst
+          mountPath: /etc/mongo-keyfile
+
+      volumes:
+      - name: keyfile-src
+        secret:
+          secretName: mongo-secret
+      - name: keyfile-dst
+        emptyDir: {}
+
+  volumeClaimTemplates:
+  - metadata:
+      name: data
+    spec:
+      storageClassName: local-path
+      accessModes: ["ReadWriteOnce"]
+      resources:
+        requests:
+          storage: 2Gi
+

@@ -1,0 +1,38 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: mongo-enable-auth
+  namespace: mongodb
+spec:
+  backoffLimit: 3
+  template:
+    spec:
+      serviceAccountName: mongo-admin
+      restartPolicy: OnFailure
+      containers:
+      - name: enable-auth
+        image: bitnami/kubectl:latest
+        command:
+          - sh
+          - -c
+          - |
+            echo "Enabling MongoDB authentication..."
+
+            kubectl patch sts mongo -n mongodb --type=json -p='[
+              {
+                "op": "replace",
+                "path": "/spec/template/spec/containers/0/command",
+                "value": [
+                  "mongod",
+                  "--replSet=rs0",
+                  "--auth",
+                  "--keyFile=/etc/mongo-keyfile/mongo-keyfile",
+                  "--bind_ip_all"
+                ]
+              }
+            ]'
+
+            kubectl rollout restart sts mongo -n mongodb
+
+            echo "Auth enabled successfully"
+
