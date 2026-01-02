@@ -1,208 +1,225 @@
-MongoDB ReplicaSet on Kubernetes (Secured & Automated)
-Purpose
+====================================================================
+MongoDB ReplicaSet on Kubernetes (Secured)
+PURPOSE
 
-This repository provides a production-safe MongoDB ReplicaSet deployment on Kubernetes with:
+This repository provides a production-safe MongoDB ReplicaSet
+deployment on Kubernetes with full automation.
 
-✅ 3-node MongoDB ReplicaSet
+Features:
 
-✅ Internal authentication using keyFile
+3-node MongoDB ReplicaSet
 
-✅ Admin & application user creation
+Internal authentication using keyFile
 
-✅ Headless service for stable DNS
+Admin & application user creation
 
-✅ Automated replica-set initialization
+Headless service for stable DNS
 
-✅ Backup & restore scripts
+Automated replica-set initialization
 
-✅ RBAC-based Kubernetes access
+Backup & restore scripts
 
-This setup avoids unsafe patterns like:
+RBAC-secured Kubernetes Jobs
 
-Enabling auth before user creation
+This design avoids:
 
-Manual kubectl exec steps
+Manual kubectl exec
 
-Non-deterministic primary election
+Auth lockout issues
 
-Architecture Overview
+Unstable primary election
+
+Unsafe initContainer hacks
+
+ARCHITECTURE OVERVIEW
+
 MongoDB ReplicaSet (rs0)
-│
-├── mongo-0 (Primary – higher priority)
-├── mongo-1 (Secondary)
-├── mongo-2 (Secondary)
-│
-├── Headless Service (mongo.mongodb.svc.cluster.local)
-├── KeyFile-based internal authentication
-├── Admin + DB users auto-created
-└── Backup & Restore via mongodump / mongorestore
 
-Prerequisites
+mongo-0 → Primary (higher priority)
+mongo-1 → Secondary
+mongo-2 → Secondary
 
-Kubernetes cluster (tested on kubeadm)
+Components:
 
-StorageClass available (local-path used here)
+Headless Service: mongo.mongodb.svc.cluster.local
+
+StatefulSet with persistent volumes
+
+KeyFile-based internal auth
+
+Bootstrap Job (one-time)
+
+Backup & Restore scripts
+
+PREREQUISITES
+
+Kubernetes cluster (kubeadm / kind / k3s)
+
+StorageClass available (local-path used)
 
 kubectl configured
 
-MongoDB image: mongo:6.0
+MongoDB image: mongo:6.0+
 
-Namespace Creation
+STEP 1 : CREATE NAMESPACE
+
 kubectl create namespace mongodb
 
-Step 1️⃣ Create MongoDB Secrets (MANDATORY)
+STEP 2 : CREATE MONGODB SECRETS (MANDATORY)
 
 You already created this correctly:
 
-kubectl create secret generic mongo-secret \
-  --from-literal=MONGO_ROOT_USER=admin \
-  --from-literal=MONGO_ROOT_PASSWORD=StrongPass123 \
-  --from-file=mongo-keyfile \
-  -n mongodb
+kubectl create secret generic mongo-secret
+--from-literal=MONGO_ROOT_USER=admin
+--from-literal=MONGO_ROOT_PASSWORD=StrongPass123
+--from-file=mongo-keyfile
+-n mongodb
 
-Purpose
+Purpose:
 
-MONGO_ROOT_USER → admin username
+MONGO_ROOT_USER → MongoDB admin username
 
-MONGO_ROOT_PASSWORD → admin password
+MONGO_ROOT_PASSWORD → MongoDB admin password
 
-mongo-keyfile → internal node-to-node authentication
+mongo-keyfile → Internal node authentication
 
-⚠️ KeyFile must have chmod 600 (handled in initContainer).
+IMPORTANT:
 
-Step 2️⃣ Create Headless Service
+KeyFile permission must be 600
+
+Handled automatically by initContainer
+
+STEP 3 : CREATE HEADLESS SERVICE
+
 kubectl apply -f headless-svc.yml
 
-Purpose
+Purpose:
 
-Enables stable DNS:
+Provides stable DNS for StatefulSet pods
+
+Required for MongoDB ReplicaSet discovery
+
+Example DNS:
 
 mongo-0.mongo.mongodb.svc.cluster.local
 
 mongo-1.mongo.mongodb.svc.cluster.local
 
-Required for ReplicaSet discovery
+mongo-2.mongo.mongodb.svc.cluster.local
 
-Step 3️⃣ Create RBAC (Required for Jobs)
+STEP 4 : APPLY RBAC (REQUIRED FOR JOBS)
+
 kubectl apply -f sa.yml
 kubectl apply -f role.yml
 kubectl apply -f rolebinding.yml
 
-Purpose
+Purpose:
 
-Allows bootstrap and auth jobs to:
+Allows Jobs to:
 
-Read pods
+List pods
 
 Exec into MongoDB pods
 
-Patch StatefulSets
+Patch StatefulSet safely
 
-Step 4️⃣ Deploy MongoDB StatefulSet
+STEP 5 : DEPLOY MONGODB STATEFULSET
+
 kubectl apply -f sts.yml
 
-Purpose
+What this does:
 
 Deploys 3 MongoDB pods
 
-Starts MongoDB with:
+Enables:
 
---replSet rs0
+ReplicaSet (rs0)
 
---auth
+Authentication
 
---keyFile
+KeyFile security
 
-Persistent storage via PVC
+Uses Persistent Volumes
 
-Verify Pods
+Verify:
 kubectl get pods -n mongodb
 
+Wait until all pods are Running
 
-Wait until all pods are Running.
+STEP 6 : BOOTSTRAP REPLICASET & USERS (ONE TIME)
 
-Step 5️⃣ Bootstrap ReplicaSet & Users (ONE-TIME)
 kubectl apply -f boot.yml
 
-What This Job Does
+This Job automatically:
 
-✔ Initializes ReplicaSet
-✔ Sets member priorities
-✔ Creates:
+Initializes ReplicaSet
 
-Admin user
+Sets member priorities
 
-Application users
+Creates admin user
 
-Database roles
+Creates application users
 
-This job runs only once and is idempotent-safe.
+This job runs once and can be deleted after success.
 
-Step 6️⃣ Enable Authentication (If using auth.yml)
-kubectl apply -f auth.yml
+STEP 7 : VERIFY SETUP
 
-Purpose
+Check ReplicaSet:
 
-Ensures MongoDB runs with authentication permanently
-
-Restarts StatefulSet safely
-
-Verification Steps
-Check ReplicaSet Status
-kubectl exec -it mongo-0 -n mongodb -- \
-mongosh -u admin -p StrongPass123 --authenticationDatabase admin \
+kubectl exec -it mongo-0 -n mongodb --
+mongosh -u admin -p StrongPass123 --authenticationDatabase admin
 --eval "rs.status()"
 
-Identify Primary
-kubectl exec -it mongo-0 -n mongodb -- \
-mongosh -u admin -p StrongPass123 --authenticationDatabase admin \
+Check Primary:
+
+kubectl exec -it mongo-0 -n mongodb --
+mongosh -u admin -p StrongPass123 --authenticationDatabase admin
 --eval "db.hello().isWritablePrimary"
 
-Backup Script
+BACKUP SCRIPT
+
+Run:
 ./backup.sh
 
-Purpose
+What it does:
 
-Automatically detects PRIMARY
+Detects PRIMARY pod automatically
 
-Uses mongodump
+Runs mongodump
 
-Stores compressed backups
+Creates compressed backup archive
 
-Restore Script
+RESTORE SCRIPT
+
+Run:
 ./restore.sh
 
-Purpose
+Why PRIMARY is required:
 
-Restores data only to PRIMARY
+MongoDB allows writes only on PRIMARY
 
-Ensures write consistency
+Restoring on secondary fails with:
+"NotWritablePrimary"
 
-Uses mongorestore
+CLEANUP (OPTIONAL)
 
-Why Restore Must Target Primary
-
-MongoDB blocks writes on secondaries.
-
-Attempting restore on a secondary results in:
-
-NotWritablePrimary
-
-
-Hence restore scripts must always detect the primary pod.
-
-Cleanup (Optional)
 kubectl delete namespace mongodb
 
-Best Practices Followed
+BEST PRACTICES FOLLOWED
 
-✔ No manual kubectl exec needed
-✔ No auth lockout risk
-✔ Replica-safe initialization
-✔ Kubernetes-native automation
-✔ GitHub-ready production layout
+No manual MongoDB exec steps
 
-Author
+No auth race conditions
+
+Replica-safe automation
+
+Kubernetes-native design
+
+GitHub-ready production layout
+
+AUTHOR
 
 Aniket Bhagat
 DevOps | Kubernetes | MongoDB | Cloud
+
+====================================================================
